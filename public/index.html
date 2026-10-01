@@ -44,6 +44,21 @@
   #info a:hover, .link:hover { text-decoration: underline; }
   #info .close { position: absolute; top: 8px; right: 10px; background: none; border: 0; color: var(--muted); font-size: 20px; cursor: pointer; }
   .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--muted); margin-left: 4px; }
+  .overview { margin-top: 10px; }
+  .overview img { float: right; max-width: 96px; max-height: 96px; margin: 0 0 6px 10px; border-radius: 6px; background: #fff; object-fit: contain; }
+  .overview p { margin: 0 0 4px; font-size: 13px; color: #cfd5e3; }
+  .overview::after { content: ""; display: block; clear: both; }
+  .small { font-size: 11px; }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 10px 0 0; font-size: 13px; }
+  .facts dt { color: var(--muted); }
+  .facts dd { margin: 0; overflow-wrap: anywhere; }
+  .rel { margin-left: 6px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; cursor: pointer; }
+  .rel:hover { color: var(--text); border-color: var(--accent); }
+  .relhead { line-height: 1.35; }
+  .relhead .arrow { color: var(--muted); }
+  .stmt { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
+  .stmt.ended { opacity: .7; }
+  .tag.warn { background: rgba(255,122,144,.18); color: #ff9fb0; }
   #foot { left: 12px; bottom: 12px; padding: 6px 10px; font-size: 11px; color: var(--muted); z-index: 1; max-width: calc(100vw - 24px); }
   #foot a { color: var(--muted); }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 5; }
@@ -98,6 +113,15 @@ const T = {
     country_l: "国", industry_l: "業種", none: "なし", wiki: "Wikipedia", wd: "Wikidata",
     foot: "Wikidataに業種付きで登録された企業のみ。全企業・最新の資本関係を網羅するものではありません。",
     other: "その他", more: (n) => `ほか ${n} 件`,
+    loading: "読み込み中…", from: "出典:", noSummary: "概要はまだありません",
+    founded: "設立", hq: "本社", employees: "従業員数", revenue: "売上高", listed: "上場", website: "Web",
+    relChip: "関係", relDetail: "この関係の詳細を見る", relation: "関係の詳細",
+    relParent: (a, b) => `${a} は ${b} の<b>親会社</b>です。`,
+    relOwner: (a, b) => `${a} は ${b} の<b>所有者・株主</b>です。`,
+    pP749: "親組織として記載（子会社側）", pP355: "子会社として記載（親会社側）", pP127: "所有者として記載",
+    share: "出資比率", period: "期間", present: "現在", asOf: "時点", source: "出典", noSource: "出典の記載なし",
+    ended: "終了済み", noStmt: "詳細な記述は見つかりませんでした",
+    relNote: "Wikidataの記述をそのまま表示しています",
   },
   en: {
     sub: "Explore parent, subsidiary and ownership links between companies",
@@ -109,6 +133,15 @@ const T = {
     country_l: "Country", industry_l: "Industry", none: "none", wiki: "Wikipedia", wd: "Wikidata",
     foot: "Only companies listed on Wikidata with an industry. Not every company, and not always up to date.",
     other: "Other", more: (n) => `${n} more`,
+    loading: "Loading…", from: "From", noSummary: "No summary yet",
+    founded: "Founded", hq: "Headquarters", employees: "Employees", revenue: "Revenue", listed: "Listed on", website: "Website",
+    relChip: "link", relDetail: "Show details of this relationship", relation: "Relationship",
+    relParent: (a, b) => `${a} is the <b>parent company</b> of ${b}.`,
+    relOwner: (a, b) => `${a} is an <b>owner / shareholder</b> of ${b}.`,
+    pP749: "Stated as parent organization (on the subsidiary)", pP355: "Stated as subsidiary (on the parent)", pP127: "Stated as owned by",
+    share: "Stake", period: "Period", present: "present", asOf: "As of", source: "Source", noSource: "No source given",
+    ended: "ended", noStmt: "No detailed statement found",
+    relNote: "Shown as recorded on Wikidata",
   },
 };
 const PALETTE = ["#7aa2ff","#ff7a90","#ffc857","#5ce1a8","#c38bff","#4fd1e8","#ff9f5a","#a3e635","#f472b6","#94a3b8","#facc15","#38bdf8"];
@@ -116,8 +149,8 @@ const OTHER = "#4b5263";
 // Density steps: number of most-notable companies (by Wikipedia language count) to draw.
 const DENSITY = [500, 1500, 3000, 6000, 12000, 25000, Infinity];
 
-const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null };
-let D, graph, adj;
+const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null, link: null };
+let D, graph, adj, pendingFocus = null;
 
 const $ = (id) => document.getElementById(id);
 const t = () => T[state.lang];
@@ -134,8 +167,12 @@ function init(data) {
   applyText();
   build();
   const hash = decodeURIComponent(location.hash.slice(1));
-  const start = D.nodes.findIndex(n => n[0] === hash);
-  if (start >= 0) setTimeout(() => select(start, true), 1500);
+  const byQ = (q) => D.nodes.findIndex(n => n[0] === q);
+  const [h1, h2] = hash.split("-");
+  if (h2) {
+    const p = byQ(h1), c = byQ(h2), e = D.edges.find(([a, b]) => a === p && b === c);
+    if (e) setTimeout(() => selectLink(p, c, e[2]), 1500);
+  } else if (byQ(h1) >= 0) setTimeout(() => select(byQ(h1), true), 1500);
 }
 
 function colorOf(i) {
@@ -148,6 +185,7 @@ function visibleSet() {
   // Nodes are sorted by notability, so "top N" is just an index cut.
   const keep = new Set();
   D.edges.forEach(([p, c]) => { if (p < limit && c < limit) { keep.add(p); keep.add(c); } });
+  if (state.link) { keep.add(state.link.p); keep.add(state.link.c); }
   if (state.selected !== null) {
     keep.add(state.selected);
     const a = adj[state.selected];
@@ -166,13 +204,15 @@ function graphData() {
 }
 
 function isNear(i) {
+  if (state.link) return i === state.link.p || i === state.link.c;
   if (state.selected === null || i === state.selected) return true;
   const a = adj[state.selected];
   return a.parents.some(([x]) => x === i) || a.children.some(([x]) => x === i);
 }
 function linkNear(l) {
-  if (state.selected === null) return true;
   const s = l.source.id ?? l.source, tg = l.target.id ?? l.target;
+  if (state.link) return s === state.link.p && tg === state.link.c;
+  if (state.selected === null) return true;
   return s === state.selected || tg === state.selected;
 }
 
@@ -186,26 +226,31 @@ function build() {
     .nodeVal(n => 1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4)
     .nodeColor(n => isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.25)")
     .linkColor(l => linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
-    .onNodeClick(n => select(n.id, true))
-    .onBackgroundClick(() => select(null))
+    .onNodeClick(n => { state.link = null; select(n.id, true); })
+    .onLinkClick(l => selectLink(l.source.id ?? l.source, l.target.id ?? l.target, l.k))
+    .onLinkHover(l => { el.style.cursor = l ? "pointer" : ""; })
+    .linkLabel(l => `${nm(l.source.id ?? l.source)} → ${nm(l.target.id ?? l.target)}`)
+    .onBackgroundClick(() => { state.link = null; select(null); })
     .width(innerWidth).height(innerHeight);
 
   if (state.mode === "3d") {
     graph = common(ForceGraph3D()(el))
       .nodeResolution(8)
       .linkOpacity(0.6)
-      .linkWidth(l => state.selected !== null && linkNear(l) ? 1.2 : 0)
-      .linkDirectionalArrowLength(l => state.selected !== null && linkNear(l) ? 4 : 0)
+      .linkWidth(l => (state.selected !== null || state.link) && linkNear(l) ? (state.link ? 2.5 : 1.2) : 0.4)
+      .linkDirectionalArrowLength(l => (state.selected !== null || state.link) && linkNear(l) ? 4 : 0)
       .linkDirectionalArrowRelPos(1);
   } else {
     graph = common(ForceGraph()(el))
       .nodeRelSize(2.2)
+      .linkHoverPrecision(6)
+      .linkWidth(l => state.link && linkNear(l) ? 3 : 1)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
       .nodeCanvasObjectMode(() => "after")
       .nodeCanvasObject((n, ctx, scale) => {
         // Labels only for notable nodes or the current neighbourhood, so the canvas stays readable.
-        if (!(scale > 2.5 || (state.selected !== null && isNear(n.id)) || D.nodes[n.id][5] > 120)) return;
+        if (!(scale > 2.5 || ((state.selected !== null || state.link) && isNear(n.id)) || D.nodes[n.id][5] > 120)) return;
         ctx.font = `${11 / scale}px system-ui, sans-serif`;
         ctx.fillStyle = isNear(n.id) ? "rgba(230,233,242,0.9)" : "rgba(230,233,242,0.25)";
         ctx.textAlign = "center";
@@ -214,7 +259,11 @@ function build() {
   }
   graph.d3Force("cluster", clusterForce());
   let fitted = false;
-  graph.onEngineStop(() => { if (!fitted && state.selected === null) { fitted = true; graph.zoomToFit(800, 40); } });
+  graph.onEngineStop(() => {
+    // Positions keep moving until the layout settles, so re-apply any focus requested before that.
+    if (pendingFocus) { const f = pendingFocus; pendingFocus = null; f(); fitted = true; return; }
+    if (!fitted && state.selected === null && !state.link) { fitted = true; graph.zoomToFit(800, 40); }
+  });
   graph.cooldownTime(12000).graphData(graphData());
 }
 
@@ -256,7 +305,7 @@ function select(i, focus) {
   renderInfo();
   if (i !== null) history.replaceState(null, "", "#" + D.nodes[i][0]);
   else history.replaceState(null, "", location.pathname);
-  if (i !== null && focus) setTimeout(() => focusOn(i), needsData ? 900 : 0);
+  if (i !== null && focus) { pendingFocus = () => focusOn(i); setTimeout(() => focusOn(i), needsData ? 900 : 0); }
 }
 
 function focusOn(i) {
@@ -270,19 +319,89 @@ function focusOn(i) {
   }
 }
 
+// ---------- Wikidata / Wikipedia lookups (on demand, cached) ----------
+const cache = new Map();
+function cached(key, fn) { if (!cache.has(key)) cache.set(key, fn().catch(() => null)); return cache.get(key); }
+const getJSON = (url) => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+function entity(qid) {
+  return cached("e:" + qid, () => getJSON(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qid}&props=claims|descriptions&languages=ja|en&format=json&origin=*`)
+    .then(j => j.entities[qid]));
+}
+// Labels for items that are not in our graph (HQ city, stock exchange, currency, source publication...).
+function labels(qids) {
+  qids = [...new Set(qids)].filter(Boolean);
+  if (!qids.length) return Promise.resolve({});
+  return cached("l:" + qids.sort().join("|"), () => getJSON(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${qids.slice(0, 50).join("|")}&props=labels&languages=ja|en|mul&format=json&origin=*`)
+    .then(j => Object.fromEntries(Object.entries(j.entities).map(([q, e]) => [q, e.labels || {}]))));
+}
+const pickLabel = (ls, q) => { const l = ls[q] || {}; return (state.lang === "ja" && l.ja?.value) || l.en?.value || l.mul?.value || l.ja?.value || q; };
+
+function summary(i) {
+  const n = D.nodes[i];
+  const order = state.lang === "ja" ? [["ja", n[7]], ["en", n[6]]] : [["en", n[6]], ["ja", n[7]]];
+  return cached(`s:${state.lang}:${i}`, async () => {
+    for (const [lang, title] of order) {
+      if (!title) continue;
+      const j = await getJSON(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${title}`).catch(() => null);
+      if (j && j.extract) return { text: j.extract, thumb: j.thumbnail?.source, lang, url: j.content_urls?.desktop?.page };
+    }
+    return null;
+  });
+}
+
+const valueId = (snak) => snak?.datavalue?.value?.id;
+const timeOf = (snak) => snak?.datavalue?.value?.time;
+function fmtTime(snak) {
+  const v = snak?.datavalue?.value; if (!v) return null;
+  const [y, m, d] = v.time.replace(/^\+/, "").split("T")[0].split("-");
+  if (v.precision <= 9) return y;
+  if (v.precision === 10) return state.lang === "ja" ? `${y}年${+m}月` : `${y}-${m}`;
+  return state.lang === "ja" ? `${y}年${+m}月${+d}日` : `${y}-${m}-${d}`;
+}
+const qual = (st, p) => (st.qualifiers?.[p] || [])[0];
+// Among repeated statements (yearly employee counts, revenue...), prefer "preferred" rank, then the latest point in time.
+function bestStatement(sts) {
+  if (!sts?.length) return null;
+  const score = (st) => (st.rank === "preferred" ? "2" : st.rank === "normal" ? "1" : "0") + (timeOf(qual(st, "P585")) || timeOf(qual(st, "P580")) || "");
+  return [...sts].filter(st => st.rank !== "deprecated").sort((a, b) => score(b).localeCompare(score(a)))[0] || null;
+}
+function amount(snak) { const v = snak?.datavalue?.value; return v ? { n: Number(v.amount), unit: v.unit?.split("/").pop() } : null; }
+function fmtNum(x) {
+  if (state.lang === "ja") {
+    if (x >= 1e12) return (x / 1e12).toFixed(x >= 1e13 ? 0 : 1) + "兆";
+    if (x >= 1e8) return (x / 1e8).toFixed(0) + "億";
+    if (x >= 1e4) return (x / 1e4).toFixed(0) + "万";
+  } else {
+    if (x >= 1e9) return (x / 1e9).toFixed(1) + "B";
+    if (x >= 1e6) return (x / 1e6).toFixed(1) + "M";
+  }
+  return x.toLocaleString();
+}
+function proportion(st) {
+  const a = amount(qual(st, "P1107")); if (!a) return null;
+  const pct = a.unit === "Q11229" ? a.n : a.n <= 1 ? a.n * 100 : a.n;
+  return `${+pct.toFixed(2)}%`;
+}
+function sources(st) {
+  return (st.references || []).flatMap(r => (r.snaks.P854 || []).map(sn => sn.datavalue?.value)).filter(Boolean).slice(0, 3);
+}
+
+// ---------- company panel ----------
 function renderInfo() {
   const box = $("info");
+  if (state.link) return renderLink();
   const i = state.selected;
   if (i === null) { box.style.display = "none"; return; }
   const n = D.nodes[i], tx = t();
-  const list = (items) => {
+  const list = (items, dir) => {
     if (!items.length) return `<li class="alt">${tx.none}</li>`;
-    const sorted = [...items].sort((a, b) => a - b); // lower index = more notable
-    const shown = sorted.slice(0, 40).map(x => `<li><span class="link" data-i="${x}">${esc(nm(x))}</span>${D.nodes[x][3] >= 0 ? `<span class="tag">${esc(D.countries[D.nodes[x][3]])}</span>` : ""}</li>`).join("");
+    const sorted = [...items].sort((a, b) => a[0] - b[0]); // lower index = more notable
+    const shown = sorted.slice(0, 40).map(([x, k]) => `<li><span class="link" data-i="${x}">${esc(nm(x))}</span>${D.nodes[x][3] >= 0 ? `<span class="tag">${esc(D.countries[D.nodes[x][3]])}</span>` : ""}<span class="rel" data-p="${dir === "up" ? x : i}" data-c="${dir === "up" ? i : x}" data-k="${k}" title="${tx.relDetail}">${tx.relChip}</span></li>`).join("");
     return shown + (sorted.length > 40 ? `<li class="alt">${tx.more(sorted.length - 40)}</li>` : "");
   };
   const a = adj[i];
-  const pick = (arr, k) => arr.filter(([, kk]) => kk === k).map(([x]) => x);
+  const pick = (arr, k) => arr.filter(([, kk]) => kk === k);
   const wikiLinks = [
     n[7] && `<a href="https://ja.wikipedia.org/wiki/${n[7]}" target="_blank" rel="noopener">${tx.wiki} (ja)</a>`,
     n[6] && `<a href="https://en.wikipedia.org/wiki/${n[6]}" target="_blank" rel="noopener">${tx.wiki} (en)</a>`,
@@ -292,15 +411,116 @@ function renderInfo() {
     <button class="close" aria-label="close">×</button>
     <h2>${esc(nm(i))}</h2>
     ${state.lang === "ja" && n[2] ? `<div class="alt">${esc(n[1])}</div>` : n[2] ? `<div class="alt">${esc(n[2])}</div>` : ""}
-    <div style="margin-top:8px">${tx.country_l}: ${n[3] >= 0 ? esc(D.countries[n[3]]) : "—"}<br>${tx.industry_l}: ${n[4] >= 0 ? esc(D.industries[n[4]]) : "—"}</div>
+    <div id="overview" class="overview"><div class="alt">${tx.loading}</div></div>
+    <dl class="facts" id="facts">
+      <dt>${tx.country_l}</dt><dd>${n[3] >= 0 ? esc(D.countries[n[3]]) : "—"}</dd>
+      <dt>${tx.industry_l}</dt><dd>${n[4] >= 0 ? esc(D.industries[n[4]]) : "—"}</dd>
+    </dl>
     <div style="margin-top:8px">${wikiLinks}</div>
-    <h3>${tx.parents}</h3><ul>${list(pick(a.parents, 0))}</ul>
-    <h3>${tx.owners}</h3><ul>${list(pick(a.parents, 1))}</ul>
-    <h3>${tx.subs}</h3><ul>${list(pick(a.children, 0))}</ul>
-    <h3>${tx.owned}</h3><ul>${list(pick(a.children, 1))}</ul>`;
+    <h3>${tx.parents}</h3><ul>${list(pick(a.parents, 0), "up")}</ul>
+    <h3>${tx.owners}</h3><ul>${list(pick(a.parents, 1), "up")}</ul>
+    <h3>${tx.subs}</h3><ul>${list(pick(a.children, 0), "down")}</ul>
+    <h3>${tx.owned}</h3><ul>${list(pick(a.children, 1), "down")}</ul>`;
   box.style.display = "block";
+  box.scrollTop = 0;
   box.querySelector(".close").onclick = () => select(null);
   box.querySelectorAll(".link").forEach(el => el.onclick = () => select(+el.dataset.i, true));
+  box.querySelectorAll(".rel").forEach(el => el.onclick = () => selectLink(+el.dataset.p, +el.dataset.c, +el.dataset.k));
+  fillOverview(i);
+}
+
+async function fillOverview(i) {
+  const tx = t();
+  const [sum, ent] = await Promise.all([summary(i), entity(D.nodes[i][0])]);
+  if (state.selected !== i || state.link) return; // user moved on
+  const ov = $("overview");
+  const desc = ent?.descriptions?.[state.lang]?.value || ent?.descriptions?.en?.value;
+  ov.innerHTML = sum
+    ? `${sum.thumb ? `<img src="${esc(sum.thumb)}" alt="" loading="lazy">` : ""}<p>${esc(sum.text)}</p><div class="alt small">${tx.from} <a href="${esc(sum.url || "#")}" target="_blank" rel="noopener">Wikipedia (${sum.lang})</a> · CC BY-SA</div>`
+    : desc ? `<p>${esc(desc)}</p>` : `<div class="alt">${tx.noSummary}</div>`;
+  if (!ent) return;
+  const c = ent.claims || {};
+  const inception = bestStatement(c.P571), hq = bestStatement(c.P159), emp = bestStatement(c.P1128),
+        rev = bestStatement(c.P2139), web = bestStatement(c.P856), ex = bestStatement(c.P414);
+  const revA = rev && amount(rev.mainsnak);
+  const ls = await labels([valueId(hq?.mainsnak), valueId(ex?.mainsnak), revA?.unit]);
+  if (state.selected !== i || state.link) return;
+  const rows = [];
+  if (inception) rows.push([tx.founded, fmtTime(inception.mainsnak)]);
+  if (hq) rows.push([tx.hq, esc(pickLabel(ls, valueId(hq.mainsnak)))]);
+  if (emp) { const a = amount(emp.mainsnak); const at = fmtTime(qual(emp, "P585")); rows.push([tx.employees, `${a.n.toLocaleString()}${at ? ` <span class="alt">(${at})</span>` : ""}`]); }
+  if (revA) { const at = fmtTime(qual(rev, "P585")); rows.push([tx.revenue, `${fmtNum(revA.n)} ${esc(pickLabel(ls, revA.unit))}${at ? ` <span class="alt">(${at})</span>` : ""}`]); }
+  if (ex) { const tick = qual(ex, "P249")?.datavalue?.value; rows.push([tx.listed, `${esc(pickLabel(ls, valueId(ex.mainsnak)))}${tick ? ` · ${esc(tick)}` : ""}`]); }
+  if (web) { const u = web.mainsnak.datavalue?.value; if (u) rows.push([tx.website, `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))}</a>`]); }
+  $("facts").insertAdjacentHTML("beforeend", rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join(""));
+}
+
+// ---------- relationship panel ----------
+function selectLink(p, c, k, focus = true) {
+  state.link = { p, c, k };
+  state.selected = null;
+  const keepNow = new Set(graph.graphData().nodes.map(n => n.id));
+  const added = !keepNow.has(p) || !keepNow.has(c);
+  graph.graphData(graphData());
+  refreshStyles();
+  renderInfo();
+  history.replaceState(null, "", `#${D.nodes[p][0]}-${D.nodes[c][0]}`);
+  if (focus) { pendingFocus = () => focusLink(p, c); setTimeout(() => focusLink(p, c), added ? 1200 : 0); }
+}
+
+// Frame both ends of a relationship.
+function focusLink(p, c) {
+  const ns = graph.graphData().nodes, a = ns.find(n => n.id === p), b = ns.find(n => n.id === c);
+  if (!a || !b || a.x === undefined) return;
+  const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: ((a.z || 0) + (b.z || 0)) / 2 };
+  const span = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+  if (state.mode === "3d") {
+    const dist = Math.max(160, span * 1.6), r = 1 + dist / Math.max(1, Math.hypot(m.x, m.y, m.z));
+    graph.cameraPosition({ x: m.x * r, y: m.y * r, z: m.z * r }, m, 1200);
+  } else {
+    graph.centerAt(m.x, m.y, 800); graph.zoom(Math.min(6, 500 / Math.max(span, 60)), 800);
+  }
+}
+
+async function renderLink() {
+  const box = $("info"), tx = t();
+  const { p, c, k } = state.link;
+  const P = D.nodes[p][0], C = D.nodes[c][0];
+  const nameLink = (i) => `<span class="link" data-i="${i}">${esc(nm(i))}</span>`;
+  box.innerHTML = `
+    <button class="close" aria-label="close">×</button>
+    <div class="alt small">${tx.relation}</div>
+    <h2 class="relhead">${nameLink(p)} <span class="arrow">→</span> ${nameLink(c)}</h2>
+    <p>${k === 0 ? tx.relParent(nameLink(p), nameLink(c)) : tx.relOwner(nameLink(p), nameLink(c))}</p>
+    <div id="relbody"><div class="alt">${tx.loading}</div></div>`;
+  box.style.display = "block";
+  box.scrollTop = 0;
+  box.querySelector(".close").onclick = () => { state.link = null; select(null); };
+  box.querySelectorAll(".link").forEach(el => el.onclick = () => { state.link = null; select(+el.dataset.i, true); });
+
+  const [ec, ep] = await Promise.all([entity(C), entity(P)]);
+  if (!state.link || state.link.p !== p || state.link.c !== c) return;
+  // The same link can be stated on the child (P749 / P127) or on the parent (P355).
+  const sts = [];
+  for (const prop of k === 0 ? ["P749", "P127"] : ["P127", "P749"]) (ec?.claims?.[prop] || []).filter(st => valueId(st.mainsnak) === P).forEach(st => sts.push([prop, st]));
+  (ep?.claims?.P355 || []).filter(st => valueId(st.mainsnak) === C).forEach(st => sts.push(["P355", st]));
+  const statedIn = sts.flatMap(([, st]) => (st.references || []).flatMap(r => (r.snaks.P248 || []).map(valueId)));
+  const ls = await labels(statedIn);
+  const propName = { P749: tx.pP749, P355: tx.pP355, P127: tx.pP127 };
+  const rows = sts.map(([prop, st]) => {
+    const pct = proportion(st), from = fmtTime(qual(st, "P580")), to = fmtTime(qual(st, "P582")), at = fmtTime(qual(st, "P585"));
+    const srcs = sources(st), si = (st.references || []).flatMap(r => (r.snaks.P248 || []).map(valueId)).filter(Boolean);
+    return `<div class="stmt${to ? " ended" : ""}">
+      <div><b>${propName[prop]}</b> <span class="tag">${prop}</span>${to ? `<span class="tag warn">${tx.ended}</span>` : ""}${st.rank === "deprecated" ? `<span class="tag warn">deprecated</span>` : ""}</div>
+      <dl class="facts">
+        ${pct ? `<dt>${tx.share}</dt><dd><b>${pct}</b></dd>` : ""}
+        ${from || to ? `<dt>${tx.period}</dt><dd>${from || "?"} – ${to || tx.present}</dd>` : ""}
+        ${at ? `<dt>${tx.asOf}</dt><dd>${at}</dd>` : ""}
+        ${si.length || srcs.length ? `<dt>${tx.source}</dt><dd>${[...si.map(q => esc(pickLabel(ls, q))), ...srcs.map(u => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(new URL(u).hostname.replace(/^www\./, ""))}</a>`)].join("<br>")}</dd>` : `<dt>${tx.source}</dt><dd class="alt">${tx.noSource}</dd>`}
+      </dl></div>`;
+  }).join("");
+  $("relbody").innerHTML = (rows || `<div class="alt">${tx.noStmt}</div>`)
+    + `<div class="alt small" style="margin-top:10px">${tx.relNote} · <a href="https://www.wikidata.org/wiki/${C}" target="_blank" rel="noopener">Wikidata</a></div>`;
 }
 
 function renderLegend() {
@@ -319,6 +539,7 @@ function applyText() {
   $("t-foot").textContent = tx.foot;
   document.documentElement.lang = state.lang;
   renderLegend();
+  cache.forEach((_, key) => key.startsWith("s:") || key.startsWith("l:") ? cache.delete(key) : 0);
   if (graph) $("stats").textContent = tx.stats(graph.graphData().nodes.length, graph.graphData().links.length);
   renderInfo();
 }
