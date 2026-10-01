@@ -125,6 +125,7 @@
     <span class="seg" id="mode"><button data-v="3d" class="on">3D</button><button data-v="2d">2D</button></span>
     <span class="seg" id="colorBy"><button data-v="country" class="on" id="t-country"></button><button data-v="industry" id="t-industry"></button></span>
     <span class="seg" id="lang"><button data-v="ja" class="on">日本語</button><button data-v="en">EN</button></span>
+    <span class="seg" id="labels"><button data-v="on" class="on" id="t-labelsOn"></button><button data-v="off" id="t-labelsOff"></button></span>
   </div>
   <div class="row">
     <label class="small" id="t-density" for="density"></label>
@@ -171,6 +172,7 @@ const T = {
     ended: "終了済み", noStmt: "詳細な記述は見つかりませんでした",
     relNote: "Wikidataの記述をそのまま表示しています",
     allCountries: "国: すべて", allIndustries: "業種: すべて", allMarkets: "指数・市場: すべて",
+    labelsOn: "社名あり", labelsOff: "社名なし",
     grpIndex: "株価指数", grpExchange: "上場市場", clear: "絞り込みを解除",
     filtered: (m, n, e) => `条件に合う ${m.toLocaleString()} 社（関係先を含め ${n.toLocaleString()} 社 / ${e.toLocaleString()} 本）`,
   },
@@ -194,6 +196,7 @@ const T = {
     ended: "ended", noStmt: "No detailed statement found",
     relNote: "Shown as recorded on Wikidata",
     allCountries: "Country: all", allIndustries: "Industry: all", allMarkets: "Index / exchange: all",
+    labelsOn: "Names", labelsOff: "No names",
     grpIndex: "Stock indices", grpExchange: "Listed on", clear: "Clear filters",
     filtered: (m, n, e) => `${m.toLocaleString()} matching companies (${n.toLocaleString()} incl. partners / ${e.toLocaleString()} links)`,
   },
@@ -204,7 +207,7 @@ const OTHER = "#4b5263";
 const DENSITY = [500, 1500, 3000, 6000, 12000, 25000, Infinity];
 
 const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null, link: null,
-  filter: { country: "", industry: "", market: "" } };
+  filter: { country: "", industry: "", market: "" }, labels: true };
 let D, graph, adj, pendingFocus = null, matchSet = null;
 
 const $ = (id) => document.getElementById(id);
@@ -307,7 +310,7 @@ function isNear(i) {
 function isMain(i) { return state.link ? i === state.link.p || i === state.link.c : i === state.selected; }
 
 // ---------- selection markers (HTML overlay, works in both 2D and 3D) ----------
-let markSet = new Set(), markEls = new Map();
+let markSet = new Set(), markEls = new Map(), markOrder = [];
 function updateMarks() {
   const main = state.link ? [state.link.p, state.link.c] : state.selected !== null ? [state.selected] : [];
   let nbr = [];
@@ -316,7 +319,8 @@ function updateMarks() {
     nbr = [...new Set([...a.parents, ...a.children].map(([x]) => x))].sort((x, y) => x - y).slice(0, 30);
   }
   // Filtered view with nothing selected: label the most notable matches.
-  if (!state.link && state.selected === null && matchSet) nbr = [...matchSet].sort((x, y) => x - y).slice(0, 60);
+  if (!state.link && state.selected === null && matchSet) nbr = [...matchSet].sort((x, y) => x - y).slice(0, 15);
+  if (!state.labels) nbr = [];
   markSet = new Set([...main, ...nbr]);
   const box = $("marks");
   box.innerHTML = ""; markEls = new Map();
@@ -335,6 +339,8 @@ function updateMarks() {
   };
   nbr.filter(i => !main.includes(i)).forEach(i => add(i, "nbr"));
   main.forEach(i => add(i, "main")); // added last so they sit on top
+  // Collision priority: selected companies first, then neighbours by notability (lower index = more notable).
+  markOrder = [...main, ...nbr.filter(i => !main.includes(i))];
 }
 function placeMarks() {
   requestAnimationFrame(placeMarks);
@@ -345,14 +351,24 @@ function placeMarks() {
     const c = graph.camera().position, t = graph.controls().target;
     cam = c; dir = { x: t.x - c.x, y: t.y - c.y, z: t.z - c.z };
   }
-  markEls.forEach((el, i) => {
-    const n = byId.get(i);
-    if (!n || n.x === undefined) { el.style.display = "none"; return; }
-    if (cam && (n.x - cam.x) * dir.x + (n.y - cam.y) * dir.y + ((n.z || 0) - cam.z) * dir.z < 0) { el.style.display = "none"; return; } // behind camera
+  // Greedy label placement: a neighbour label that would overlap an already placed one is hidden (its dot stays).
+  const placed = [];
+  for (const i of markOrder) {
+    const el = markEls.get(i), n = byId.get(i);
+    if (!el) continue;
+    if (!n || n.x === undefined) { el.style.display = "none"; continue; }
+    if (cam && (n.x - cam.x) * dir.x + (n.y - cam.y) * dir.y + ((n.z || 0) - cam.z) * dir.z < 0) { el.style.display = "none"; continue; } // behind camera
     const p = state.mode === "3d" ? graph.graph2ScreenCoords(n.x, n.y, n.z) : graph.graph2ScreenCoords(n.x, n.y);
     el.style.display = "";
     el.style.transform = `translate(${p.x}px, ${p.y}px)`;
-  });
+    const lbl = el.firstElementChild.nextElementSibling;
+    lbl.w ||= lbl.offsetWidth; lbl.h ||= lbl.offsetHeight;
+    const main = el.classList.contains("main"), top = main ? 44 : 22;
+    const r = { x: p.x - lbl.w / 2 - 4, y: p.y - top - 2, w: lbl.w + 8, h: lbl.h + 4 };
+    const hit = placed.some(q => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h);
+    lbl.style.visibility = hit && !main ? "hidden" : "";
+    if (!hit || main) placed.push(r);
+  }
 }
 requestAnimationFrame(placeMarks);
 
@@ -405,8 +421,10 @@ function build() {
       .nodeCanvasObjectMode(() => "after")
       .nodeCanvasObject((n, ctx, scale) => {
         // Labels only for notable nodes or the current neighbourhood, so the canvas stays readable.
-        if (markSet.has(n.id)) return;
-        if (!(scale > 2.5 || D.nodes[n.id][5] > 120)) return;
+        if (!state.labels || markSet.has(n.id)) return;
+        if (matchSet && !matchSet.has(n.id)) return; // filtered: only name the matches
+        if (state.selected !== null || state.link) return; // selection: the overlay names the neighbourhood
+        if (!(scale > 4 || D.nodes[n.id][5] > 150)) return;
         ctx.font = `${11 / scale}px system-ui, sans-serif`;
         ctx.fillStyle = isNear(n.id) ? "rgba(230,233,242,0.9)" : "rgba(230,233,242,0.25)";
         ctx.textAlign = "center";
@@ -754,6 +772,7 @@ function applyText() {
   $("t-country").textContent = tx.country;
   $("t-industry").textContent = tx.industry;
   $("t-density").textContent = tx.density;
+  $("t-labelsOn").textContent = tx.labelsOn; $("t-labelsOff").textContent = tx.labelsOff;
   $("t-foot").textContent = tx.foot;
   document.documentElement.lang = state.lang;
   renderLegend();
@@ -771,6 +790,7 @@ function bindUI() {
   seg("mode", "mode", () => { build(); if (state.selected !== null) setTimeout(() => focusOn(state.selected), 1500); });
   seg("colorBy", "colorBy", () => { refreshStyles(); renderLegend(); graph.d3ReheatSimulation(); });
   seg("lang", "lang", applyText);
+  seg("labels", "labelsMode", () => { state.labels = state.labelsMode !== "off"; updateMarks(); if (state.mode === "2d") graph.nodeCanvasObject(graph.nodeCanvasObject()); });
   const applyFilter = () => {
     ["fCountry", "fIndustry", "fMarket"].forEach(id => $(id).classList.toggle("on", !!$(id).value));
     state.filter = { country: $("fCountry").value, industry: $("fIndustry").value, market: $("fMarket").value };
