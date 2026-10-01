@@ -32,6 +32,14 @@
   #results li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
   #results li:hover, #results li.active { background: rgba(122,162,255,0.18); }
   #results .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .filters select { width: 100%; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(255,255,255,0.06); color: var(--text); font: inherit; font-size: 12px; }
+  .filters select.on { border-color: var(--accent); background: rgba(122,162,255,0.16); }
+  .filters select option, .filters select optgroup { background: #111726; color: var(--text); }
+  #fMarket { grid-column: 1 / 2; }
+  #fClear { grid-column: 2 / 3; justify-self: start; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  #fClear:hover { color: var(--text); border-color: var(--accent); }
   #legend { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); max-height: 92px; overflow-y: auto; }
   #legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; background: var(--c); }
   #info { top: 12px; right: 12px; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px; z-index: 2; display: none; }
@@ -80,7 +88,15 @@
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 5; }
   @media (max-width: 640px) {
     #top { padding: 10px; }
-    #legend { display: none; }
+    .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .filters select { width: 100%; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(255,255,255,0.06); color: var(--text); font: inherit; font-size: 12px; }
+  .filters select.on { border-color: var(--accent); background: rgba(122,162,255,0.16); }
+  .filters select option, .filters select optgroup { background: #111726; color: var(--text); }
+  #fMarket { grid-column: 1 / 2; }
+  #fClear { grid-column: 2 / 3; justify-self: start; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  #fClear:hover { color: var(--text); border-color: var(--accent); }
+  #legend { display: none; }
     #info { top: auto; bottom: 12px; max-height: 45vh; }
     #foot { display: none; }
   }
@@ -104,6 +120,12 @@
   <div class="row">
     <label class="small" id="t-density" for="density"></label>
     <input type="range" id="density" min="0" max="6" step="1" value="2">
+  </div>
+  <div class="filters">
+    <select id="fCountry" aria-label="country"></select>
+    <select id="fIndustry" aria-label="industry"></select>
+    <select id="fMarket" aria-label="index / exchange"></select>
+    <button id="fClear" type="button" title="clear">×</button>
   </div>
   <div class="row"><label class="small" id="stats"></label></div>
   <div id="legend"></div>
@@ -139,6 +161,9 @@ const T = {
     share: "出資比率", period: "期間", present: "現在", asOf: "時点", source: "出典", noSource: "出典の記載なし",
     ended: "終了済み", noStmt: "詳細な記述は見つかりませんでした",
     relNote: "Wikidataの記述をそのまま表示しています",
+    allCountries: "国: すべて", allIndustries: "業種: すべて", allMarkets: "指数・市場: すべて",
+    grpIndex: "株価指数", grpExchange: "上場市場", clear: "絞り込みを解除",
+    filtered: (m, n, e) => `条件に合う ${m.toLocaleString()} 社（関係先を含め ${n.toLocaleString()} 社 / ${e.toLocaleString()} 本）`,
   },
   en: {
     sub: "Explore parent, subsidiary and ownership links between companies",
@@ -159,6 +184,9 @@ const T = {
     share: "Stake", period: "Period", present: "present", asOf: "As of", source: "Source", noSource: "No source given",
     ended: "ended", noStmt: "No detailed statement found",
     relNote: "Shown as recorded on Wikidata",
+    allCountries: "Country: all", allIndustries: "Industry: all", allMarkets: "Index / exchange: all",
+    grpIndex: "Stock indices", grpExchange: "Listed on", clear: "Clear filters",
+    filtered: (m, n, e) => `${m.toLocaleString()} matching companies (${n.toLocaleString()} incl. partners / ${e.toLocaleString()} links)`,
   },
 };
 const PALETTE = ["#7aa2ff","#ff7a90","#ffc857","#5ce1a8","#c38bff","#4fd1e8","#ff9f5a","#a3e635","#f472b6","#94a3b8","#facc15","#38bdf8"];
@@ -166,8 +194,9 @@ const OTHER = "#4b5263";
 // Density steps: number of most-notable companies (by Wikipedia language count) to draw.
 const DENSITY = [500, 1500, 3000, 6000, 12000, 25000, Infinity];
 
-const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null, link: null };
-let D, graph, adj, pendingFocus = null;
+const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null, link: null,
+  filter: { country: "", industry: "", market: "" } };
+let D, graph, adj, pendingFocus = null, matchSet = null;
 
 const $ = (id) => document.getElementById(id);
 const t = () => T[state.lang];
@@ -202,11 +231,36 @@ function colorOf(i) {
   return k >= 0 && k < PALETTE.length ? PALETTE[k] : OTHER;
 }
 
+// Companies matching the country / industry / index-or-exchange filters (null = no filter).
+function computeMatches() {
+  const f = state.filter;
+  if (!f.country && !f.industry && !f.market) return null;
+  let base = null;
+  if (f.market) {
+    const [kind, k] = f.market.split(":");
+    base = (kind === "i" ? D.indices[+k] : D.exchanges[+k]).members;
+  }
+  const ok = (i) => (!f.country || D.nodes[i][3] === +f.country) && (!f.industry || D.nodes[i][4] === +f.industry);
+  const out = new Set();
+  if (base) base.forEach(i => ok(i) && out.add(i));
+  else D.nodes.forEach((_, i) => ok(i) && out.add(i));
+  return out;
+}
+
 function visibleSet() {
-  const limit = DENSITY[state.density];
-  // Nodes are sorted by notability, so "top N" is just an index cut.
   const keep = new Set();
-  D.edges.forEach(([p, c]) => { if (p < limit && c < limit) { keep.add(p); keep.add(c); } });
+  if (matchSet) {
+    // Filtered view: every match (no density cap) plus its direct partners, which are drawn dimmed.
+    matchSet.forEach(i => {
+      keep.add(i);
+      adj[i].parents.forEach(([x]) => keep.add(x));
+      adj[i].children.forEach(([x]) => keep.add(x));
+    });
+  } else {
+    const limit = DENSITY[state.density];
+    // Nodes are sorted by notability, so "top N" is just an index cut.
+    D.edges.forEach(([p, c]) => { if (p < limit && c < limit) { keep.add(p); keep.add(c); } });
+  }
   if (state.link) { keep.add(state.link.p); keep.add(state.link.c); }
   if (state.selected !== null) {
     keep.add(state.selected);
@@ -219,9 +273,10 @@ function visibleSet() {
 
 function graphData() {
   const keep = visibleSet();
-  const nodes = [...keep].map(i => ({ id: i }));
+  const prev = new Map((graph ? graph.graphData().nodes : []).map(n => [n.id, n]));
+  const nodes = [...keep].map(i => prev.get(i) || { id: i });
   const links = D.edges.filter(([p, c]) => keep.has(p) && keep.has(c)).map(([p, c, k]) => ({ source: p, target: c, k }));
-  $("stats").textContent = t().stats(nodes.length, links.length);
+  $("stats").textContent = matchSet ? t().filtered(matchSet.size, nodes.length, links.length) : t().stats(nodes.length, links.length);
   return { nodes, links };
 }
 
@@ -242,6 +297,8 @@ function updateMarks() {
     const a = adj[state.selected];
     nbr = [...new Set([...a.parents, ...a.children].map(([x]) => x))].sort((x, y) => x - y).slice(0, 30);
   }
+  // Filtered view with nothing selected: label the most notable matches.
+  if (!state.link && state.selected === null && matchSet) nbr = [...matchSet].sort((x, y) => x - y).slice(0, 60);
   markSet = new Set([...main, ...nbr]);
   const box = $("marks");
   box.innerHTML = ""; markEls = new Map();
@@ -296,7 +353,9 @@ function build() {
     .nodeId("id")
     .nodeLabel(n => `${nm(n.id)}${D.nodes[n.id][3] >= 0 ? " · " + cname(D.nodes[n.id][3]) : ""}`)
     .nodeVal(n => (1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4) * (isMain(n.id) ? 4 : 1))
-    .nodeColor(n => isMain(n.id) ? "#ffffff" : isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.18)")
+    .nodeColor(n => isMain(n.id) ? "#ffffff"
+      : (state.selected !== null || state.link) ? (isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.18)")
+      : matchSet && !matchSet.has(n.id) ? "rgba(110,118,140,0.30)" : colorOf(n.id))
     .linkColor(l => state.link && linkNear(l) ? "#ffd27a" : linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
     .onNodeClick(n => { state.link = null; select(n.id, true); })
     .onLinkClick(l => selectLink(l.source.id ?? l.source, l.target.id ?? l.target, l.k))
@@ -653,8 +712,25 @@ function renderLegend() {
     + `<span style="--c:${OTHER}">${t().other}</span>`;
 }
 
+function fillFilterOptions() {
+  const tx = t(), keepVal = (id) => $(id).value;
+  const cCount = new Map(), iCount = new Map();
+  D.nodes.forEach(n => { cCount.set(n[3], (cCount.get(n[3]) || 0) + 1); iCount.set(n[4], (iCount.get(n[4]) || 0) + 1); });
+  const opts = (list, count, label, min, max) => [...count.entries()].filter(([k, c]) => k >= 0 && c >= min)
+    .sort((a, b) => b[1] - a[1]).slice(0, max).map(([k, c]) => `<option value="${k}">${esc(label(k))} (${c})</option>`).join("");
+  const set = (id, html) => { const v = keepVal(id); $(id).innerHTML = html; $(id).value = v; };
+  set("fCountry", `<option value="">${tx.allCountries}</option>` + opts(D.countries, cCount, cname, 3, 200));
+  set("fIndustry", `<option value="">${tx.allIndustries}</option>` + opts(D.industries, iCount, iname, 10, 80));
+  const mname = (o) => (state.lang === "ja" && o.ja) || o.en || o.ja;
+  set("fMarket", `<option value="">${tx.allMarkets}</option>`
+    + `<optgroup label="${tx.grpIndex}">` + D.indices.map((x, k) => `<option value="i:${k}">${esc(mname(x))} (${x.members.length})</option>`).join("") + `</optgroup>`
+    + `<optgroup label="${tx.grpExchange}">` + D.exchanges.map((x, k) => `<option value="e:${k}">${esc(mname(x))} (${x.members.length})</option>`).join("") + `</optgroup>`);
+  $("fClear").title = tx.clear;
+}
+
 function applyText() {
   const tx = t();
+  fillFilterOptions();
   $("t-sub").textContent = tx.sub;
   $("search").placeholder = tx.search;
   $("t-country").textContent = tx.country;
@@ -665,7 +741,7 @@ function applyText() {
   renderLegend();
   if (graph) updateMarks();
   cache.forEach((_, key) => key.startsWith("s:") || key.startsWith("l:") ? cache.delete(key) : 0);
-  if (graph) $("stats").textContent = tx.stats(graph.graphData().nodes.length, graph.graphData().links.length);
+  if (graph) { const g = graph.graphData(); $("stats").textContent = matchSet ? tx.filtered(matchSet.size, g.nodes.length, g.links.length) : tx.stats(g.nodes.length, g.links.length); }
   renderInfo();
 }
 
@@ -677,6 +753,17 @@ function bindUI() {
   seg("mode", "mode", () => { build(); if (state.selected !== null) setTimeout(() => focusOn(state.selected), 1500); });
   seg("colorBy", "colorBy", () => { refreshStyles(); renderLegend(); graph.d3ReheatSimulation(); });
   seg("lang", "lang", applyText);
+  const applyFilter = () => {
+    ["fCountry", "fIndustry", "fMarket"].forEach(id => $(id).classList.toggle("on", !!$(id).value));
+    state.filter = { country: $("fCountry").value, industry: $("fIndustry").value, market: $("fMarket").value };
+    matchSet = computeMatches();
+    $("density").disabled = !!matchSet;
+    graph.graphData(graphData());
+    refreshStyles();
+    if (state.selected === null && !state.link) pendingFocus = (ms) => graph.zoomToFit(ms, 60);
+  };
+  ["fCountry", "fIndustry", "fMarket"].forEach(id => $(id).onchange = applyFilter);
+  $("fClear").onclick = () => { ["fCountry", "fIndustry", "fMarket"].forEach(id => $(id).value = ""); applyFilter(); };
   $("density").oninput = (e) => { state.density = +e.target.value; graph.graphData(graphData()); };
 
   let hits = [], active = 0;

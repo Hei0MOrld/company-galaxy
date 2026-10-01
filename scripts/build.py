@@ -11,10 +11,14 @@ def is_company(n):
     if any(HARD.search(i) for i in ind): return False
     return not all(SOFT.search(i) for i in ind)
 
-nodes = {n["id"]: n for n in raw["nodes"] if is_company(n)}
+# Stock index constituents (scripts/fetch_market.py + fetch_extra.py) are kept even without ownership links.
+mpath = os.path.join(os.path.dirname(__file__), "market.json")
+market = json.load(open(mpath)) if os.path.exists(mpath) else {"indices": [], "exchanges": []}
+index_members = {q for ix in market["indices"] for q in ix["members"]}
+nodes = {n["id"]: n for n in raw["nodes"] if n["id"] in index_members or is_company(n)}
 edges = [(p, c, k) for p, c, k in raw["edges"] if p in nodes and c in nodes]
 linked = {x for p, c, _ in edges for x in (p, c)}
-nodes = {q: n for q, n in nodes.items() if q in linked}
+nodes = {q: n for q, n in nodes.items() if q in linked or q in index_members}
 
 def name(n):
     return n["en"] or n["ja"] or n["id"]
@@ -57,6 +61,12 @@ out = {
     # [parentIndex, childIndex, 0=parent/subsidiary 1=owned by]
     "edges": [[idx[p], idx[c], 0 if k == "parent" else 1] for p, c, k in edges],
 }
+# Filters: index constituents and listing exchanges, as lists of node indices.
+out["indices"] = [{"en": ix["en"], "ja": ix["ja"], "note": ix.get("note"), "members": sorted(idx[q] for q in ix["members"] if q in idx)}
+                  for ix in market["indices"]]
+exs = [{"en": e["en"], "ja": e["ja"], "members": sorted(idx[q] for q in e["members"] if q in idx)} for e in market["exchanges"]]
+out["exchanges"] = sorted([e for e in exs if len(e["members"]) >= 20], key=lambda e: -len(e["members"]))
+
 # Japanese names for countries/industries, keyed by English label (scripts/fetch_ja_labels.py).
 ja_path = os.path.join(os.path.dirname(__file__), "ja_labels.json")
 ja = json.load(open(ja_path)) if os.path.exists(ja_path) else {}
