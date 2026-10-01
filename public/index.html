@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Company Galaxy</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='6' fill='%237aa2ff'/><circle cx='5' cy='8' r='3' fill='%23ff7a90'/><circle cx='27' cy='24' r='3' fill='%23ffc857'/><path d='M5 8L16 16L27 24' stroke='%23e6e9f2' stroke-width='1.5'/></svg>">
+<meta name="description" content="Explore parent, subsidiary and ownership links between tens of thousands of companies in 3D or 2D. Data: Wikidata (CC0).">
+<style>
+  :root {
+    --bg: #05070d; --panel: rgba(14, 18, 30, 0.88); --line: rgba(255,255,255,0.10);
+    --text: #e6e9f2; --muted: #8b93a7; --accent: #7aa2ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  #graph { position: fixed; inset: 0; }
+  .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #top { top: 12px; left: 12px; width: min(360px, calc(100vw - 24px)); padding: 12px; z-index: 3; }
+  h1 { font-size: 16px; margin: 0 0 2px; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: var(--muted); padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  .seg button.on { background: var(--accent); color: #0b1020; font-weight: 600; }
+  input[type=search] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(255,255,255,0.06); color: var(--text); font: inherit; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  label.small { font-size: 12px; color: var(--muted); }
+  #results { list-style: none; margin: 4px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+  #results li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  #results li:hover, #results li.active { background: rgba(122,162,255,0.18); }
+  #results .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  #legend { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--muted); max-height: 92px; overflow-y: auto; }
+  #legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; background: var(--c); }
+  #info { top: 12px; right: 12px; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px; z-index: 2; display: none; }
+  #info h2 { margin: 0; font-size: 18px; }
+  #info .alt { color: var(--muted); font-size: 13px; }
+  #info h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 14px 0 4px; }
+  #info ul { list-style: none; margin: 0; padding: 0; }
+  #info li { padding: 3px 0; }
+  #info a, .link { color: var(--accent); text-decoration: none; cursor: pointer; }
+  #info a:hover, .link:hover { text-decoration: underline; }
+  #info .close { position: absolute; top: 8px; right: 10px; background: none; border: 0; color: var(--muted); font-size: 20px; cursor: pointer; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,0.08); color: var(--muted); margin-left: 4px; }
+  #foot { left: 12px; bottom: 12px; padding: 6px 10px; font-size: 11px; color: var(--muted); z-index: 1; max-width: calc(100vw - 24px); }
+  #foot a { color: var(--muted); }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 5; }
+  @media (max-width: 640px) {
+    #top { padding: 10px; }
+    #legend { display: none; }
+    #info { top: auto; bottom: 12px; max-height: 45vh; }
+    #foot { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+<div id="loading">Loading…</div>
+
+<div id="top" class="panel">
+  <h1>Company Galaxy</h1>
+  <p class="sub" id="t-sub"></p>
+  <input type="search" id="search" autocomplete="off">
+  <ul id="results"></ul>
+  <div class="row">
+    <span class="seg" id="mode"><button data-v="3d" class="on">3D</button><button data-v="2d">2D</button></span>
+    <span class="seg" id="colorBy"><button data-v="country" class="on" id="t-country"></button><button data-v="industry" id="t-industry"></button></span>
+    <span class="seg" id="lang"><button data-v="ja" class="on">日本語</button><button data-v="en">EN</button></span>
+  </div>
+  <div class="row">
+    <label class="small" id="t-density" for="density"></label>
+    <input type="range" id="density" min="0" max="6" step="1" value="2">
+  </div>
+  <div class="row"><label class="small" id="stats"></label></div>
+  <div id="legend"></div>
+</div>
+
+<div id="info" class="panel"></div>
+
+<div id="foot" class="panel">
+  <span id="t-foot"></span>
+  Data: <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> (CC0)
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1"></script>
+<script src="https://cdn.jsdelivr.net/npm/force-graph@1"></script>
+<script>
+const T = {
+  ja: {
+    sub: "世界の企業の親子・所有関係を宇宙のように探索",
+    search: "会社名で検索（例: Toyota, ソニー, Alphabet）",
+    country: "国で色分け", industry: "業種で色分け",
+    density: "表示する社数",
+    stats: (n, e) => `${n.toLocaleString()} 社 / ${e.toLocaleString()} 本の関係を表示中`,
+    parents: "親会社", owners: "所有者・株主", subs: "子会社", owned: "所有・出資先",
+    country_l: "国", industry_l: "業種", none: "なし", wiki: "Wikipedia", wd: "Wikidata",
+    foot: "Wikidataに業種付きで登録された企業のみ。全企業・最新の資本関係を網羅するものではありません。",
+    other: "その他", more: (n) => `ほか ${n} 件`,
+  },
+  en: {
+    sub: "Explore parent, subsidiary and ownership links between companies",
+    search: "Search a company (e.g. Toyota, Sony, Alphabet)",
+    country: "Color by country", industry: "Color by industry",
+    density: "Companies shown",
+    stats: (n, e) => `Showing ${n.toLocaleString()} companies / ${e.toLocaleString()} links`,
+    parents: "Parent companies", owners: "Owners / shareholders", subs: "Subsidiaries", owned: "Owns stakes in",
+    country_l: "Country", industry_l: "Industry", none: "none", wiki: "Wikipedia", wd: "Wikidata",
+    foot: "Only companies listed on Wikidata with an industry. Not every company, and not always up to date.",
+    other: "Other", more: (n) => `${n} more`,
+  },
+};
+const PALETTE = ["#7aa2ff","#ff7a90","#ffc857","#5ce1a8","#c38bff","#4fd1e8","#ff9f5a","#a3e635","#f472b6","#94a3b8","#facc15","#38bdf8"];
+const OTHER = "#4b5263";
+// Density steps: number of most-notable companies (by Wikipedia language count) to draw.
+const DENSITY = [500, 1500, 3000, 6000, 12000, 25000, Infinity];
+
+const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null };
+let D, graph, adj;
+
+const $ = (id) => document.getElementById(id);
+const t = () => T[state.lang];
+const nm = (i) => (state.lang === "ja" && D.nodes[i][2]) || D.nodes[i][1];
+
+fetch("data/graph.json").then(r => r.json()).then(init);
+
+function init(data) {
+  D = data;
+  adj = D.nodes.map(() => ({ parents: [], children: [] }));
+  D.edges.forEach(([p, c, k]) => { adj[c].parents.push([p, k]); adj[p].children.push([c, k]); });
+  $("loading").remove();
+  bindUI();
+  applyText();
+  build();
+  const hash = decodeURIComponent(location.hash.slice(1));
+  const start = D.nodes.findIndex(n => n[0] === hash);
+  if (start >= 0) setTimeout(() => select(start, true), 1500);
+}
+
+function colorOf(i) {
+  const k = state.colorBy === "country" ? D.nodes[i][3] : D.nodes[i][4];
+  return k >= 0 && k < PALETTE.length ? PALETTE[k] : OTHER;
+}
+
+function visibleSet() {
+  const limit = DENSITY[state.density];
+  // Nodes are sorted by notability, so "top N" is just an index cut.
+  const keep = new Set();
+  D.edges.forEach(([p, c]) => { if (p < limit && c < limit) { keep.add(p); keep.add(c); } });
+  if (state.selected !== null) {
+    keep.add(state.selected);
+    const a = adj[state.selected];
+    a.parents.forEach(([x]) => keep.add(x));
+    a.children.forEach(([x]) => keep.add(x));
+  }
+  return keep;
+}
+
+function graphData() {
+  const keep = visibleSet();
+  const nodes = [...keep].map(i => ({ id: i }));
+  const links = D.edges.filter(([p, c]) => keep.has(p) && keep.has(c)).map(([p, c, k]) => ({ source: p, target: c, k }));
+  $("stats").textContent = t().stats(nodes.length, links.length);
+  return { nodes, links };
+}
+
+function isNear(i) {
+  if (state.selected === null || i === state.selected) return true;
+  const a = adj[state.selected];
+  return a.parents.some(([x]) => x === i) || a.children.some(([x]) => x === i);
+}
+function linkNear(l) {
+  if (state.selected === null) return true;
+  const s = l.source.id ?? l.source, tg = l.target.id ?? l.target;
+  return s === state.selected || tg === state.selected;
+}
+
+function build() {
+  const el = $("graph");
+  el.innerHTML = "";
+  const common = (g) => g
+    .backgroundColor("#05070d")
+    .nodeId("id")
+    .nodeLabel(n => `${nm(n.id)}${D.nodes[n.id][3] >= 0 ? " · " + D.countries[D.nodes[n.id][3]] : ""}`)
+    .nodeVal(n => 1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4)
+    .nodeColor(n => isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.25)")
+    .linkColor(l => linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
+    .onNodeClick(n => select(n.id, true))
+    .onBackgroundClick(() => select(null))
+    .width(innerWidth).height(innerHeight);
+
+  if (state.mode === "3d") {
+    graph = common(ForceGraph3D()(el))
+      .nodeResolution(8)
+      .linkOpacity(0.6)
+      .linkWidth(l => state.selected !== null && linkNear(l) ? 1.2 : 0)
+      .linkDirectionalArrowLength(l => state.selected !== null && linkNear(l) ? 4 : 0)
+      .linkDirectionalArrowRelPos(1);
+  } else {
+    graph = common(ForceGraph()(el))
+      .nodeRelSize(2.2)
+      .linkDirectionalArrowLength(3)
+      .linkDirectionalArrowRelPos(1)
+      .nodeCanvasObjectMode(() => "after")
+      .nodeCanvasObject((n, ctx, scale) => {
+        // Labels only for notable nodes or the current neighbourhood, so the canvas stays readable.
+        if (!(scale > 2.5 || (state.selected !== null && isNear(n.id)) || D.nodes[n.id][5] > 120)) return;
+        ctx.font = `${11 / scale}px system-ui, sans-serif`;
+        ctx.fillStyle = isNear(n.id) ? "rgba(230,233,242,0.9)" : "rgba(230,233,242,0.25)";
+        ctx.textAlign = "center";
+        ctx.fillText(nm(n.id), n.x, n.y + 10 / scale);
+      });
+  }
+  graph.d3Force("cluster", clusterForce());
+  let fitted = false;
+  graph.onEngineStop(() => { if (!fitted && state.selected === null) { fitted = true; graph.zoomToFit(800, 40); } });
+  graph.cooldownTime(12000).graphData(graphData());
+}
+
+// Pull each colour group toward its own anchor so countries/industries form separate "star clusters".
+function clusterForce() {
+  let nodes = [];
+  const R = state.mode === "3d" ? 420 : 520, K = PALETTE.length;
+  const anchors = Array.from({ length: K }, (_, k) => {
+    if (state.mode === "2d") { const a = (2 * Math.PI * k) / K; return { x: R * Math.cos(a), y: R * Math.sin(a), z: 0 }; }
+    const y = 1 - (2 * (k + 0.5)) / K, r = Math.sqrt(1 - y * y), a = k * Math.PI * (3 - Math.sqrt(5));
+    return { x: R * r * Math.cos(a), y: R * y, z: R * r * Math.sin(a) };
+  });
+  const force = (alpha) => {
+    for (const n of nodes) {
+      const k = state.colorBy === "country" ? D.nodes[n.id][3] : D.nodes[n.id][4];
+      const a = k >= 0 && k < K ? anchors[k] : { x: 0, y: 0, z: 0 };
+      n.vx += (a.x - n.x) * 0.04 * alpha;
+      n.vy += (a.y - n.y) * 0.04 * alpha;
+      if (n.z !== undefined) n.vz += (a.z - n.z) * 0.04 * alpha;
+    }
+  };
+  force.initialize = (ns) => { nodes = ns; };
+  return force;
+}
+
+function refreshStyles() {
+  graph.nodeColor(graph.nodeColor()).linkColor(graph.linkColor());
+  if (state.mode === "3d") graph.linkWidth(graph.linkWidth()).linkDirectionalArrowLength(graph.linkDirectionalArrowLength());
+}
+
+function select(i, focus) {
+  const prev = state.selected;
+  state.selected = i;
+  // Pull in the neighbourhood if some neighbours are hidden by the density limit.
+  const keepNow = new Set(graph.graphData().nodes.map(n => n.id));
+  const needsData = i !== null && [...adj[i].parents, ...adj[i].children].some(([x]) => !keepNow.has(x)) || (i === null && prev !== null);
+  if (needsData || (i !== null && !keepNow.has(i))) graph.graphData(graphData());
+  refreshStyles();
+  renderInfo();
+  if (i !== null) history.replaceState(null, "", "#" + D.nodes[i][0]);
+  else history.replaceState(null, "", location.pathname);
+  if (i !== null && focus) setTimeout(() => focusOn(i), needsData ? 900 : 0);
+}
+
+function focusOn(i) {
+  const n = graph.graphData().nodes.find(n => n.id === i);
+  if (!n || n.x === undefined) return;
+  if (state.mode === "3d") {
+    const dist = 260, r = 1 + dist / Math.hypot(n.x, n.y, n.z || 1);
+    graph.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 1200);
+  } else {
+    graph.centerAt(n.x, n.y, 800); graph.zoom(4, 800);
+  }
+}
+
+function renderInfo() {
+  const box = $("info");
+  const i = state.selected;
+  if (i === null) { box.style.display = "none"; return; }
+  const n = D.nodes[i], tx = t();
+  const list = (items) => {
+    if (!items.length) return `<li class="alt">${tx.none}</li>`;
+    const sorted = [...items].sort((a, b) => a - b); // lower index = more notable
+    const shown = sorted.slice(0, 40).map(x => `<li><span class="link" data-i="${x}">${esc(nm(x))}</span>${D.nodes[x][3] >= 0 ? `<span class="tag">${esc(D.countries[D.nodes[x][3]])}</span>` : ""}</li>`).join("");
+    return shown + (sorted.length > 40 ? `<li class="alt">${tx.more(sorted.length - 40)}</li>` : "");
+  };
+  const a = adj[i];
+  const pick = (arr, k) => arr.filter(([, kk]) => kk === k).map(([x]) => x);
+  const wikiLinks = [
+    n[7] && `<a href="https://ja.wikipedia.org/wiki/${n[7]}" target="_blank" rel="noopener">${tx.wiki} (ja)</a>`,
+    n[6] && `<a href="https://en.wikipedia.org/wiki/${n[6]}" target="_blank" rel="noopener">${tx.wiki} (en)</a>`,
+    `<a href="https://www.wikidata.org/wiki/${n[0]}" target="_blank" rel="noopener">${tx.wd}</a>`,
+  ].filter(Boolean).join(" · ");
+  box.innerHTML = `
+    <button class="close" aria-label="close">×</button>
+    <h2>${esc(nm(i))}</h2>
+    ${state.lang === "ja" && n[2] ? `<div class="alt">${esc(n[1])}</div>` : n[2] ? `<div class="alt">${esc(n[2])}</div>` : ""}
+    <div style="margin-top:8px">${tx.country_l}: ${n[3] >= 0 ? esc(D.countries[n[3]]) : "—"}<br>${tx.industry_l}: ${n[4] >= 0 ? esc(D.industries[n[4]]) : "—"}</div>
+    <div style="margin-top:8px">${wikiLinks}</div>
+    <h3>${tx.parents}</h3><ul>${list(pick(a.parents, 0))}</ul>
+    <h3>${tx.owners}</h3><ul>${list(pick(a.parents, 1))}</ul>
+    <h3>${tx.subs}</h3><ul>${list(pick(a.children, 0))}</ul>
+    <h3>${tx.owned}</h3><ul>${list(pick(a.children, 1))}</ul>`;
+  box.style.display = "block";
+  box.querySelector(".close").onclick = () => select(null);
+  box.querySelectorAll(".link").forEach(el => el.onclick = () => select(+el.dataset.i, true));
+}
+
+function renderLegend() {
+  const names = state.colorBy === "country" ? D.countries : D.industries;
+  $("legend").innerHTML = names.slice(0, PALETTE.length).map((c, k) => `<span style="--c:${PALETTE[k]}">${esc(c)}</span>`).join("")
+    + `<span style="--c:${OTHER}">${t().other}</span>`;
+}
+
+function applyText() {
+  const tx = t();
+  $("t-sub").textContent = tx.sub;
+  $("search").placeholder = tx.search;
+  $("t-country").textContent = tx.country;
+  $("t-industry").textContent = tx.industry;
+  $("t-density").textContent = tx.density;
+  $("t-foot").textContent = tx.foot;
+  document.documentElement.lang = state.lang;
+  renderLegend();
+  if (graph) $("stats").textContent = tx.stats(graph.graphData().nodes.length, graph.graphData().links.length);
+  renderInfo();
+}
+
+function bindUI() {
+  const seg = (id, key, onChange) => $(id).querySelectorAll("button").forEach(b => b.onclick = () => {
+    $(id).querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    state[key] = b.dataset.v; onChange();
+  });
+  seg("mode", "mode", () => { build(); if (state.selected !== null) setTimeout(() => focusOn(state.selected), 1500); });
+  seg("colorBy", "colorBy", () => { refreshStyles(); renderLegend(); graph.d3ReheatSimulation(); });
+  seg("lang", "lang", applyText);
+  $("density").oninput = (e) => { state.density = +e.target.value; graph.graphData(graphData()); };
+
+  let hits = [], active = 0;
+  const show = () => {
+    $("results").innerHTML = hits.map((i, k) => `<li class="${k === active ? "active" : ""}" data-i="${i}"><span>${esc(nm(i))}</span><span class="meta">${D.nodes[i][3] >= 0 ? esc(D.countries[D.nodes[i][3]]) : ""}</span></li>`).join("");
+    $("results").querySelectorAll("li").forEach(li => li.onclick = () => choose(+li.dataset.i));
+  };
+  const choose = (i) => { hits = []; show(); $("search").value = nm(i); select(i, true); };
+  $("search").oninput = (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    hits = [];
+    if (q.length >= 1) {
+      for (let i = 0; i < D.nodes.length && hits.length < 12; i++) {
+        const n = D.nodes[i];
+        if (n[1].toLowerCase().includes(q) || (n[2] && n[2].toLowerCase().includes(q))) hits.push(i);
+      }
+    }
+    active = 0; show();
+  };
+  $("search").onkeydown = (e) => {
+    if (!hits.length) return;
+    if (e.key === "ArrowDown") { active = Math.min(active + 1, hits.length - 1); show(); e.preventDefault(); }
+    if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); show(); e.preventDefault(); }
+    if (e.key === "Enter") choose(hits[active]);
+    if (e.key === "Escape") { hits = []; show(); }
+  };
+  addEventListener("resize", () => graph && graph.width(innerWidth).height(innerHeight));
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+</script>
+</body>
+</html>
