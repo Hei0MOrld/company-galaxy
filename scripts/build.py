@@ -57,6 +57,11 @@ out = {
     # [parentIndex, childIndex, 0=parent/subsidiary 1=owned by]
     "edges": [[idx[p], idx[c], 0 if k == "parent" else 1] for p, c, k in edges],
 }
+# Japanese names for countries/industries, keyed by English label (scripts/fetch_ja_labels.py).
+ja_path = os.path.join(os.path.dirname(__file__), "ja_labels.json")
+ja = json.load(open(ja_path)) if os.path.exists(ja_path) else {}
+for key in ("countries", "industries"):
+    out[key + "_ja"] = [ja.get(key, {}).get(n) for n in out[key]]
 dst = os.path.join(os.path.dirname(__file__), "..", "public", "data", "graph.json")
 json.dump(out, open(dst, "w"), ensure_ascii=False, separators=(",", ":"))
 print(len(out_nodes), "nodes", len(out["edges"]), "edges", os.path.getsize(dst) // 1024, "KB")

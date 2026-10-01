@@ -61,6 +61,9 @@
   .tag.warn { background: rgba(255,122,144,.18); color: #ff9fb0; }
   #marks { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
   .mark { position: absolute; left: 0; top: 0; will-change: transform; }
+  .mark .lbl, .mark .dot, .mark .ring { pointer-events: auto; cursor: pointer; }
+  .mark:hover { z-index: 5; }
+  .mark.nbr .lbl:hover { border-color: var(--accent); color: #fff; background: rgba(20,28,50,.95); }
   .mark .ring { position: absolute; width: 34px; height: 34px; left: -17px; top: -17px; border-radius: 50%;
     border: 2px solid #fff; box-shadow: 0 0 14px 2px var(--accent), inset 0 0 8px var(--accent); animation: pulse 1.6s ease-out infinite; }
   .mark .ring::after { content: ""; position: absolute; inset: -8px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); }
@@ -169,8 +172,13 @@ let D, graph, adj, pendingFocus = null;
 const $ = (id) => document.getElementById(id);
 const t = () => T[state.lang];
 const nm = (i) => (state.lang === "ja" && D.nodes[i][2]) || D.nodes[i][1];
+const cname = (k) => (state.lang === "ja" && D.countries_ja?.[k]) || D.countries[k];
+const iname = (k) => (state.lang === "ja" && D.industries_ja?.[k]) || D.industries[k];
 
 fetch("data/graph.json").then(r => r.json()).then(init);
+
+// Any manual camera move (drag / wheel / touch) cancels the auto-follow so the user can look around freely.
+["pointerdown", "wheel", "touchstart"].forEach(ev => document.getElementById("graph").addEventListener(ev, () => { pendingFocus = null; }, { capture: true, passive: true }));
 
 function init(data) {
   D = data;
@@ -242,6 +250,11 @@ function updateMarks() {
     el.className = "mark " + cls;
     el.innerHTML = cls === "main" ? `<div class="ring"></div><div class="lbl"></div>` : `<div class="dot"></div><div class="lbl"></div>`;
     el.querySelector(".lbl").textContent = nm(i);
+    el.querySelectorAll(".lbl, .dot, .ring").forEach(x => x.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if (!state.link && i === state.selected) return;
+      state.link = null; select(i, true);
+    }));
     el.style.display = "none";
     box.appendChild(el); markEls.set(i, el);
   };
@@ -281,7 +294,7 @@ function build() {
   const common = (g) => g
     .backgroundColor("#05070d")
     .nodeId("id")
-    .nodeLabel(n => `${nm(n.id)}${D.nodes[n.id][3] >= 0 ? " · " + D.countries[D.nodes[n.id][3]] : ""}`)
+    .nodeLabel(n => `${nm(n.id)}${D.nodes[n.id][3] >= 0 ? " · " + cname(D.nodes[n.id][3]) : ""}`)
     .nodeVal(n => (1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4) * (isMain(n.id) ? 4 : 1))
     .nodeColor(n => isMain(n.id) ? "#ffffff" : isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.18)")
     .linkColor(l => state.link && linkNear(l) ? "#ffd27a" : linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
@@ -468,7 +481,7 @@ function renderInfo() {
   const list = (items, dir) => {
     if (!items.length) return `<li class="alt">${tx.none}</li>`;
     const sorted = [...items].sort((a, b) => a[0] - b[0]); // lower index = more notable
-    const shown = sorted.slice(0, 40).map(([x, k]) => `<li><span class="link" data-i="${x}">${esc(nm(x))}</span>${D.nodes[x][3] >= 0 ? `<span class="tag">${esc(D.countries[D.nodes[x][3]])}</span>` : ""}<span class="rel" data-p="${dir === "up" ? x : i}" data-c="${dir === "up" ? i : x}" data-k="${k}" title="${tx.relDetail}">${tx.relChip}</span></li>`).join("");
+    const shown = sorted.slice(0, 40).map(([x, k]) => `<li><span class="link" data-i="${x}">${esc(nm(x))}</span>${D.nodes[x][3] >= 0 ? `<span class="tag">${esc(cname(D.nodes[x][3]))}</span>` : ""}<span class="rel" data-p="${dir === "up" ? x : i}" data-c="${dir === "up" ? i : x}" data-k="${k}" title="${tx.relDetail}">${tx.relChip}</span></li>`).join("");
     return shown + (sorted.length > 40 ? `<li class="alt">${tx.more(sorted.length - 40)}</li>` : "");
   };
   const a = adj[i];
@@ -484,8 +497,8 @@ function renderInfo() {
     ${state.lang === "ja" && n[2] ? `<div class="alt">${esc(n[1])}</div>` : n[2] ? `<div class="alt">${esc(n[2])}</div>` : ""}
     <div id="overview" class="overview"><div class="alt">${tx.loading}</div></div>
     <dl class="facts" id="facts">
-      <dt>${tx.country_l}</dt><dd>${n[3] >= 0 ? esc(D.countries[n[3]]) : "—"}</dd>
-      <dt>${tx.industry_l}</dt><dd>${n[4] >= 0 ? esc(D.industries[n[4]]) : "—"}</dd>
+      <dt>${tx.country_l}</dt><dd>${n[3] >= 0 ? esc(cname(n[3])) : "—"}</dd>
+      <dt>${tx.industry_l}</dt><dd>${n[4] >= 0 ? esc(iname(n[4])) : "—"}</dd>
     </dl>
     <div style="margin-top:8px">${wikiLinks}</div>
     <h3>${tx.parents}</h3><ul>${list(pick(a.parents, 0), "up")}</ul>
@@ -506,9 +519,14 @@ async function fillOverview(i) {
   if (state.selected !== i || state.link) return; // user moved on
   const ov = $("overview");
   const desc = ent?.descriptions?.[state.lang]?.value || ent?.descriptions?.en?.value;
-  ov.innerHTML = sum
-    ? `${sum.thumb ? `<img src="${esc(sum.thumb)}" alt="" loading="lazy">` : ""}<p>${esc(sum.text)}</p><div class="alt small">${tx.from} <a href="${esc(sum.url || "#")}" target="_blank" rel="noopener">Wikipedia (${sum.lang})</a> · CC BY-SA</div>`
-    : desc ? `<p>${esc(desc)}</p>` : `<div class="alt">${tx.noSummary}</div>`;
+  const descLang = ent?.descriptions?.[state.lang]?.value ? state.lang : "en";
+  const text = sum ? sum.text : desc, textLang = sum ? sum.lang : descLang;
+  if (!text) { ov.innerHTML = `<div class="alt">${tx.noSummary}</div>`; }
+  else {
+    ov.innerHTML = `${sum?.thumb ? `<img src="${esc(sum.thumb)}" alt="" loading="lazy">` : ""}<p id="ovText">${esc(text)}</p>`
+      + `<div class="alt small">${sum ? `${tx.from} <a href="${esc(sum.url || "#")}" target="_blank" rel="noopener">Wikipedia (${sum.lang})</a> · CC BY-SA` : `${tx.from} Wikidata`}<span id="ovTr"></span></div>`;
+    if (state.lang === "ja" && textLang !== "ja") offerTranslation(i, text);
+  }
   if (!ent) return;
   const c = ent.claims || {};
   const inception = bestStatement(c.P571), hq = bestStatement(c.P159), emp = bestStatement(c.P1128),
@@ -524,6 +542,41 @@ async function fillOverview(i) {
   if (ex) { const tick = qual(ex, "P249")?.datavalue?.value; rows.push([tx.listed, `${esc(pickLabel(ls, valueId(ex.mainsnak)))}${tick ? ` · ${esc(tick)}` : ""}`]); }
   if (web) { const u = web.mainsnak.datavalue?.value; if (u) rows.push([tx.website, `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""))}</a>`]); }
   $("facts").insertAdjacentHTML("beforeend", rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join(""));
+}
+
+// English summaries in Japanese mode: translate on-device with Chrome's built-in Translator API when present,
+// otherwise offer a Google Translate link. Nothing is sent to an AI service by this page.
+let translator = null;
+async function offerTranslation(i, text) {
+  const tr = $("ovTr"), still = () => state.selected === i && !state.link && $("ovTr") === tr;
+  const show = (ja) => {
+    if (!still()) return;
+    $("ovText").textContent = ja;
+    tr.innerHTML = ` · 機械翻訳（ブラウザ内蔵） · <span class="link" id="ovOrig">原文</span>`;
+    $("ovOrig").onclick = () => { $("ovText").textContent = text; tr.innerHTML = ""; offerTranslation(i, text); };
+  };
+  const cachedJa = cache.get("t:" + text);
+  if (cachedJa) return show(cachedJa);
+  const gt = `https://translate.google.com/?sl=en&tl=ja&op=translate&text=${encodeURIComponent(text)}`;
+  let av = "unavailable";
+  try { if ("Translator" in self) av = await Translator.availability({ sourceLanguage: "en", targetLanguage: "ja" }); } catch {}
+  const run = async () => {
+    tr.innerHTML = " · 翻訳中…";
+    try {
+      translator ||= await Translator.create({ sourceLanguage: "en", targetLanguage: "ja" });
+      const ja = await translator.translate(text);
+      cache.set("t:" + text, ja); show(ja);
+    } catch { if (still()) tr.innerHTML = ` · <a href="${gt}" target="_blank" rel="noopener">Google翻訳で日本語にする</a>`; }
+  };
+  if (!still()) return;
+  if (av === "available") return run();
+  if (av === "downloadable" || av === "downloading") {
+    // Model download needs a user gesture.
+    tr.innerHTML = ` · <span class="link" id="ovDo">日本語に翻訳</span>（初回のみ翻訳データを取得）`;
+    $("ovDo").onclick = run;
+    return;
+  }
+  tr.innerHTML = ` · <a href="${gt}" target="_blank" rel="noopener">Google翻訳で日本語にする</a>`;
 }
 
 // ---------- relationship panel ----------
@@ -595,7 +648,7 @@ async function renderLink() {
 }
 
 function renderLegend() {
-  const names = state.colorBy === "country" ? D.countries : D.industries;
+  const names = (state.colorBy === "country" ? D.countries : D.industries).map((_, k) => state.colorBy === "country" ? cname(k) : iname(k));
   $("legend").innerHTML = names.slice(0, PALETTE.length).map((c, k) => `<span style="--c:${PALETTE[k]}">${esc(c)}</span>`).join("")
     + `<span style="--c:${OTHER}">${t().other}</span>`;
 }
@@ -628,7 +681,7 @@ function bindUI() {
 
   let hits = [], active = 0;
   const show = () => {
-    $("results").innerHTML = hits.map((i, k) => `<li class="${k === active ? "active" : ""}" data-i="${i}"><span>${esc(nm(i))}</span><span class="meta">${D.nodes[i][3] >= 0 ? esc(D.countries[D.nodes[i][3]]) : ""}</span></li>`).join("");
+    $("results").innerHTML = hits.map((i, k) => `<li class="${k === active ? "active" : ""}" data-i="${i}"><span>${esc(nm(i))}</span><span class="meta">${D.nodes[i][3] >= 0 ? esc(cname(D.nodes[i][3])) : ""}</span></li>`).join("");
     $("results").querySelectorAll("li").forEach(li => li.onclick = () => choose(+li.dataset.i));
   };
   const choose = (i) => { hits = []; show(); $("search").value = nm(i); select(i, true); };
