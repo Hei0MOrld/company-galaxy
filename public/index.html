@@ -59,6 +59,19 @@
   .stmt { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
   .stmt.ended { opacity: .7; }
   .tag.warn { background: rgba(255,122,144,.18); color: #ff9fb0; }
+  #marks { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+  .mark { position: absolute; left: 0; top: 0; will-change: transform; }
+  .mark .ring { position: absolute; width: 34px; height: 34px; left: -17px; top: -17px; border-radius: 50%;
+    border: 2px solid #fff; box-shadow: 0 0 14px 2px var(--accent), inset 0 0 8px var(--accent); animation: pulse 1.6s ease-out infinite; }
+  .mark .ring::after { content: ""; position: absolute; inset: -8px; border-radius: 50%; border: 1px solid rgba(255,255,255,.35); }
+  .mark .lbl { position: absolute; left: 0; top: -44px; transform: translateX(-50%); white-space: nowrap;
+    background: rgba(8,11,20,.92); border: 1px solid var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+    padding: 3px 10px; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,.5); }
+  .mark .lbl::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -5px; border: 5px solid transparent; border-top-color: var(--accent); border-bottom: 0; }
+  .mark.nbr .lbl { top: -22px; font-size: 11px; font-weight: 500; padding: 1px 6px; border-color: rgba(255,255,255,.18); color: #d6dbe8; background: rgba(8,11,20,.75); }
+  .mark.nbr .lbl::after { display: none; }
+  .mark.nbr .dot { position: absolute; width: 10px; height: 10px; left: -5px; top: -5px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.7); }
+  @keyframes pulse { 0% { transform: scale(.85); opacity: 1; } 70% { transform: scale(1.25); opacity: .55; } 100% { transform: scale(.85); opacity: 1; } }
   #foot { left: 12px; bottom: 12px; padding: 6px 10px; font-size: 11px; color: var(--muted); z-index: 1; max-width: calc(100vw - 24px); }
   #foot a { color: var(--muted); }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 5; }
@@ -72,6 +85,7 @@
 </head>
 <body>
 <div id="graph"></div>
+<div id="marks"></div>
 <div id="loading">Loading…</div>
 
 <div id="top" class="panel">
@@ -209,6 +223,51 @@ function isNear(i) {
   const a = adj[state.selected];
   return a.parents.some(([x]) => x === i) || a.children.some(([x]) => x === i);
 }
+function isMain(i) { return state.link ? i === state.link.p || i === state.link.c : i === state.selected; }
+
+// ---------- selection markers (HTML overlay, works in both 2D and 3D) ----------
+let markSet = new Set(), markEls = new Map();
+function updateMarks() {
+  const main = state.link ? [state.link.p, state.link.c] : state.selected !== null ? [state.selected] : [];
+  let nbr = [];
+  if (!state.link && state.selected !== null) {
+    const a = adj[state.selected];
+    nbr = [...new Set([...a.parents, ...a.children].map(([x]) => x))].sort((x, y) => x - y).slice(0, 30);
+  }
+  markSet = new Set([...main, ...nbr]);
+  const box = $("marks");
+  box.innerHTML = ""; markEls = new Map();
+  const add = (i, cls) => {
+    const el = document.createElement("div");
+    el.className = "mark " + cls;
+    el.innerHTML = cls === "main" ? `<div class="ring"></div><div class="lbl"></div>` : `<div class="dot"></div><div class="lbl"></div>`;
+    el.querySelector(".lbl").textContent = nm(i);
+    el.style.display = "none";
+    box.appendChild(el); markEls.set(i, el);
+  };
+  nbr.filter(i => !main.includes(i)).forEach(i => add(i, "nbr"));
+  main.forEach(i => add(i, "main")); // added last so they sit on top
+}
+function placeMarks() {
+  requestAnimationFrame(placeMarks);
+  if (!graph || !markEls.size) return;
+  const byId = new Map(graph.graphData().nodes.map(n => [n.id, n]));
+  let cam, dir;
+  if (state.mode === "3d") {
+    const c = graph.camera().position, t = graph.controls().target;
+    cam = c; dir = { x: t.x - c.x, y: t.y - c.y, z: t.z - c.z };
+  }
+  markEls.forEach((el, i) => {
+    const n = byId.get(i);
+    if (!n || n.x === undefined) { el.style.display = "none"; return; }
+    if (cam && (n.x - cam.x) * dir.x + (n.y - cam.y) * dir.y + ((n.z || 0) - cam.z) * dir.z < 0) { el.style.display = "none"; return; } // behind camera
+    const p = state.mode === "3d" ? graph.graph2ScreenCoords(n.x, n.y, n.z) : graph.graph2ScreenCoords(n.x, n.y);
+    el.style.display = "";
+    el.style.transform = `translate(${p.x}px, ${p.y}px)`;
+  });
+}
+requestAnimationFrame(placeMarks);
+
 function linkNear(l) {
   const s = l.source.id ?? l.source, tg = l.target.id ?? l.target;
   if (state.link) return s === state.link.p && tg === state.link.c;
@@ -223,9 +282,9 @@ function build() {
     .backgroundColor("#05070d")
     .nodeId("id")
     .nodeLabel(n => `${nm(n.id)}${D.nodes[n.id][3] >= 0 ? " · " + D.countries[D.nodes[n.id][3]] : ""}`)
-    .nodeVal(n => 1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4)
-    .nodeColor(n => isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.25)")
-    .linkColor(l => linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
+    .nodeVal(n => (1 + Math.log2(1 + D.nodes[n.id][5]) * 1.4) * (isMain(n.id) ? 4 : 1))
+    .nodeColor(n => isMain(n.id) ? "#ffffff" : isNear(n.id) ? colorOf(n.id) : "rgba(80,88,110,0.18)")
+    .linkColor(l => state.link && linkNear(l) ? "#ffd27a" : linkNear(l) ? (l.k === 0 ? "rgba(160,190,255,0.55)" : "rgba(255,200,120,0.45)") : "rgba(120,130,160,0.08)")
     .onNodeClick(n => { state.link = null; select(n.id, true); })
     .onLinkClick(l => selectLink(l.source.id ?? l.source, l.target.id ?? l.target, l.k))
     .onLinkHover(l => { el.style.cursor = l ? "pointer" : ""; })
@@ -237,8 +296,11 @@ function build() {
     graph = common(ForceGraph3D()(el))
       .nodeResolution(8)
       .linkOpacity(0.6)
-      .linkWidth(l => (state.selected !== null || state.link) && linkNear(l) ? (state.link ? 2.5 : 1.2) : 0.4)
+      .linkWidth(l => (state.selected !== null || state.link) && linkNear(l) ? (state.link ? 3.5 : 1.2) : 0.4)
       .linkDirectionalArrowLength(l => (state.selected !== null || state.link) && linkNear(l) ? 4 : 0)
+      .linkDirectionalParticles(l => (state.selected !== null || state.link) && linkNear(l) ? (state.link ? 4 : 2) : 0)
+      .linkDirectionalParticleWidth(l => state.link ? 3 : 2)
+      .linkDirectionalParticleColor(() => "#ffffff")
       .linkDirectionalArrowRelPos(1);
   } else {
     graph = common(ForceGraph()(el))
@@ -246,11 +308,15 @@ function build() {
       .linkHoverPrecision(6)
       .linkWidth(l => state.link && linkNear(l) ? 3 : 1)
       .linkDirectionalArrowLength(3)
+      .linkDirectionalParticles(l => (state.selected !== null || state.link) && linkNear(l) ? (state.link ? 4 : 2) : 0)
+      .linkDirectionalParticleWidth(l => state.link ? 4 : 2.5)
+      .linkDirectionalParticleColor(() => "#ffffff")
       .linkDirectionalArrowRelPos(1)
       .nodeCanvasObjectMode(() => "after")
       .nodeCanvasObject((n, ctx, scale) => {
         // Labels only for notable nodes or the current neighbourhood, so the canvas stays readable.
-        if (!(scale > 2.5 || ((state.selected !== null || state.link) && isNear(n.id)) || D.nodes[n.id][5] > 120)) return;
+        if (markSet.has(n.id)) return;
+        if (!(scale > 2.5 || D.nodes[n.id][5] > 120)) return;
         ctx.font = `${11 / scale}px system-ui, sans-serif`;
         ctx.fillStyle = isNear(n.id) ? "rgba(230,233,242,0.9)" : "rgba(230,233,242,0.25)";
         ctx.textAlign = "center";
@@ -259,9 +325,12 @@ function build() {
   }
   graph.d3Force("cluster", clusterForce());
   let fitted = false;
+  let ticks = 0;
+  // While the layout is still settling, keep the camera following whatever was asked to be focused.
+  graph.onEngineTick(() => { if (pendingFocus && ++ticks % 15 === 0) pendingFocus(300); });
   graph.onEngineStop(() => {
     // Positions keep moving until the layout settles, so re-apply any focus requested before that.
-    if (pendingFocus) { const f = pendingFocus; pendingFocus = null; f(); fitted = true; return; }
+    if (pendingFocus) { const f = pendingFocus; pendingFocus = null; f(800); fitted = true; return; }
     if (!fitted && state.selected === null && !state.link) { fitted = true; graph.zoomToFit(800, 40); }
   });
   graph.cooldownTime(12000).graphData(graphData());
@@ -291,7 +360,9 @@ function clusterForce() {
 
 function refreshStyles() {
   graph.nodeColor(graph.nodeColor()).linkColor(graph.linkColor());
+  graph.nodeVal(graph.nodeVal()).linkDirectionalParticles(graph.linkDirectionalParticles());
   if (state.mode === "3d") graph.linkWidth(graph.linkWidth()).linkDirectionalArrowLength(graph.linkDirectionalArrowLength());
+  updateMarks();
 }
 
 function select(i, focus) {
@@ -305,17 +376,17 @@ function select(i, focus) {
   renderInfo();
   if (i !== null) history.replaceState(null, "", "#" + D.nodes[i][0]);
   else history.replaceState(null, "", location.pathname);
-  if (i !== null && focus) { pendingFocus = () => focusOn(i); setTimeout(() => focusOn(i), needsData ? 900 : 0); }
+  if (i !== null && focus) { pendingFocus = (ms) => focusOn(i, ms); setTimeout(() => focusOn(i), needsData ? 900 : 0); }
 }
 
-function focusOn(i) {
+function focusOn(i, ms = 1200) {
   const n = graph.graphData().nodes.find(n => n.id === i);
   if (!n || n.x === undefined) return;
   if (state.mode === "3d") {
-    const dist = 260, r = 1 + dist / Math.hypot(n.x, n.y, n.z || 1);
-    graph.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, 1200);
+    const dist = 600, r = 1 + dist / Math.hypot(n.x, n.y, n.z || 1);
+    graph.cameraPosition({ x: n.x * r, y: n.y * r, z: n.z * r }, n, ms);
   } else {
-    graph.centerAt(n.x, n.y, 800); graph.zoom(4, 800);
+    graph.centerAt(n.x, n.y, Math.min(ms, 800)); graph.zoom(4, Math.min(ms, 800));
   }
 }
 
@@ -465,20 +536,20 @@ function selectLink(p, c, k, focus = true) {
   refreshStyles();
   renderInfo();
   history.replaceState(null, "", `#${D.nodes[p][0]}-${D.nodes[c][0]}`);
-  if (focus) { pendingFocus = () => focusLink(p, c); setTimeout(() => focusLink(p, c), added ? 1200 : 0); }
+  if (focus) { pendingFocus = (ms) => focusLink(p, c, ms); setTimeout(() => focusLink(p, c), added ? 1200 : 0); }
 }
 
 // Frame both ends of a relationship.
-function focusLink(p, c) {
+function focusLink(p, c, ms = 1200) {
   const ns = graph.graphData().nodes, a = ns.find(n => n.id === p), b = ns.find(n => n.id === c);
   if (!a || !b || a.x === undefined) return;
   const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: ((a.z || 0) + (b.z || 0)) / 2 };
   const span = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
   if (state.mode === "3d") {
-    const dist = Math.max(160, span * 1.6), r = 1 + dist / Math.max(1, Math.hypot(m.x, m.y, m.z));
-    graph.cameraPosition({ x: m.x * r, y: m.y * r, z: m.z * r }, m, 1200);
+    const dist = Math.max(350, span * 1.8), r = 1 + dist / Math.max(1, Math.hypot(m.x, m.y, m.z));
+    graph.cameraPosition({ x: m.x * r, y: m.y * r, z: m.z * r }, m, ms);
   } else {
-    graph.centerAt(m.x, m.y, 800); graph.zoom(Math.min(6, 500 / Math.max(span, 60)), 800);
+    graph.centerAt(m.x, m.y, Math.min(ms, 800)); graph.zoom(Math.min(6, 500 / Math.max(span, 60)), Math.min(ms, 800));
   }
 }
 
@@ -539,6 +610,7 @@ function applyText() {
   $("t-foot").textContent = tx.foot;
   document.documentElement.lang = state.lang;
   renderLegend();
+  if (graph) updateMarks();
   cache.forEach((_, key) => key.startsWith("s:") || key.startsWith("l:") ? cache.delete(key) : 0);
   if (graph) $("stats").textContent = tx.stats(graph.graphData().nodes.length, graph.graphData().links.length);
   renderInfo();
