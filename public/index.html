@@ -216,7 +216,8 @@ const OTHER = "#4b5263";
 // Density steps: number of most-notable companies (by Wikipedia language count) to draw.
 const DENSITY = [500, 1500, 3000, 6000, 12000, 25000, Infinity];
 
-const state = { mode: "3d", colorBy: "country", lang: "ja", density: 2, selected: null, link: null,
+// UI language follows the browser: Japanese for ja-*, English for everyone else.
+const state = { mode: "3d", colorBy: "country", lang: (navigator.language || "").startsWith("ja") ? "ja" : "en", density: 2, selected: null, link: null,
   filter: { country: "", industry: "", market: "" }, labels: true };
 let D, graph, adj, pendingFocus = null, matchSet = null;
 
@@ -246,6 +247,7 @@ function init(data) {
   D.edges.forEach(([p, c, k]) => { adj[c].parents.push([p, k]); adj[p].children.push([c, k]); });
   $("loading").remove();
   bindUI();
+  $("lang").querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.v === state.lang));
   applyText();
   build();
   const hash = decodeURIComponent(location.hash.slice(1));
