@@ -1,5 +1,7 @@
 # Company Galaxy
 
+[![CI](https://github.com/Hei0MOrld/company-galaxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Hei0MOrld/company-galaxy/actions/workflows/ci.yml)
+
 Explore parent / subsidiary / ownership links between **24,013 companies** (21,815 links) in 3D or 2D.
 世界の企業の親子・所有関係を、宇宙のように3D/2Dで探索できます。
 
@@ -21,3 +23,12 @@ cd scripts
 # download edges (see git history for the SPARQL), then
 python3 fetch_nodes.py && python3 fill_labels.py && python3 build.py
 ```
+
+Tests (no dependencies) check that the built `graph.json` stays consistent: edges point at real companies, no self-ownership or duplicate links, filters and Japanese labels line up.
+```
+python3 -m unittest discover -s tests -v
+```
+
+## License
+
+Code: MIT. Company data: Wikidata (CC0).

@@ -2,3 +2,4 @@ scripts/raw.json
 scripts/edges_*.csv
 .vercel
 .DS_Store
+._*
